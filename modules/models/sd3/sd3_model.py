@@ -1,4 +1,5 @@
 import contextlib
+import importlib.util
 
 import torch
 
@@ -7,6 +8,10 @@ from modules.models.sd3.sd3_impls import BaseModel, SDVAE, SD3LatentFormat
 from modules.models.sd3.sd3_cond import SD3Cond
 
 from modules import shared, devices
+
+hthpu = None
+if importlib.util.find_spec("optimum_habana") is not None:
+    import habana_frameworks.torch.hpu as hthpu
 
 
 class SD3Denoiser(k_diffusion.external.DiscreteSchedule):
@@ -54,7 +59,11 @@ class SD3Inferencer(torch.nn.Module):
         return self.cond_stage_model(batch)
 
     def apply_model(self, x, t, cond):
-        return self.model(x, t, c_crossattn=cond['crossattn'], y=cond['vector'])
+        if hthpu and x.device.type == 'hpu':
+            with hthpu.autocast():
+                return self.model(x, t, c_crossattn=cond['crossattn'], y=cond['vector'])
+        else:
+            return self.model(x, t, c_crossattn=cond['crossattn'], y=cond['vector'])
 
     def decode_first_stage(self, latent):
         latent = self.latent_format.process_out(latent)

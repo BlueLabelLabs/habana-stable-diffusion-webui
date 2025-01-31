@@ -4,8 +4,14 @@ import torch
 import math
 from torch import nn
 from transformers import CLIPTokenizer, T5TokenizerFast
+import importlib.util
 
 from modules import sd_hijack
+
+# Check for Habana Gaudi support
+hthpu = None
+if importlib.util.find_spec("optimum_habana") is not None:
+    import habana_frameworks.torch.hpu as hthpu
 
 
 #################################################################################################
@@ -27,11 +33,19 @@ class AutocastLinear(nn.Linear):
 
 def attention(q, k, v, heads, mask=None):
     """Convenience wrapper around a basic attention operation"""
-    b, _, dim_head = q.shape
-    dim_head //= heads
-    q, k, v = [t.view(b, -1, heads, dim_head).transpose(1, 2) for t in (q, k, v)]
-    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
-    return out.transpose(1, 2).reshape(b, -1, heads * dim_head)
+    if hthpu and q.device.type == 'hpu':
+        with hthpu.autocast():
+            b, _, dim_head = q.shape
+            dim_head //= heads
+            q, k, v = [t.view(b, -1, heads, dim_head).transpose(1, 2) for t in (q, k, v)]
+            out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+            return out.transpose(1, 2).reshape(b, -1, heads * dim_head)
+    else:
+        b, _, dim_head = q.shape
+        dim_head //= heads
+        q, k, v = [t.view(b, -1, heads, dim_head).transpose(1, 2) for t in (q, k, v)]
+        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+        return out.transpose(1, 2).reshape(b, -1, heads * dim_head)
 
 
 class Mlp(nn.Module):

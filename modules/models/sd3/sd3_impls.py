@@ -5,6 +5,11 @@ import math
 import einops
 from modules.models.sd3.mmdit import MMDiT
 from PIL import Image
+import importlib.util
+
+hthpu = None
+if importlib.util.find_spec("optimum_habana") is not None:
+    import habana_frameworks.torch.hpu as hthpu
 
 
 #################################################################################################
@@ -70,10 +75,18 @@ class BaseModel(torch.nn.Module):
         self.depth = depth
 
     def apply_model(self, x, sigma, c_crossattn=None, y=None):
-        dtype = self.get_dtype()
-        timestep = self.model_sampling.timestep(sigma).float()
-        model_output = self.diffusion_model(x.to(dtype), timestep, context=c_crossattn.to(dtype), y=y.to(dtype)).float()
-        return self.model_sampling.calculate_denoised(sigma, model_output, x)
+        if hthpu and x.device.type == 'hpu':
+            with hthpu.autocast():
+                # HPU-specific operations
+                dtype = self.get_dtype()
+                timestep = self.model_sampling.timestep(sigma).float()
+                model_output = self.diffusion_model(x.to(dtype), timestep, context=c_crossattn.to(dtype), y=y.to(dtype)).float()
+                return self.model_sampling.calculate_denoised(sigma, model_output, x)
+        else:
+            dtype = self.get_dtype()
+            timestep = self.model_sampling.timestep(sigma).float()
+            model_output = self.diffusion_model(x.to(dtype), timestep, context=c_crossattn.to(dtype), y=y.to(dtype)).float()
+            return self.model_sampling.calculate_denoised(sigma, model_output, x)
 
     def forward(self, *args, **kwargs):
         return self.apply_model(*args, **kwargs)

@@ -7,6 +7,11 @@ import torch
 import torch.nn as nn
 from einops import rearrange, repeat
 from modules.models.sd3.other_impls import attention, Mlp
+import importlib.util
+
+hthpu = None
+if importlib.util.find_spec("optimum_habana") is not None:
+    import habana_frameworks.torch.hpu as hthpu
 
 
 class PatchEmbed(nn.Module):
@@ -616,7 +621,11 @@ class MMDiT(nn.Module):
 
         context = self.context_embedder(context)
 
-        x = self.forward_core_with_concat(x, c, context)
+        if hthpu and x.device.type == 'hpu':
+            with hthpu.autocast():
+                x = self.forward_core_with_concat(x, c, context)
+        else:
+            x = self.forward_core_with_concat(x, c, context)
 
         x = self.unpatchify(x, hw=hw)  # (N, out_channels, H, W)
         return x

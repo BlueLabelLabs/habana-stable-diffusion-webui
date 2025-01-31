@@ -19,6 +19,13 @@ from torch.nn.init import normal_, xavier_normal_, xavier_uniform_, kaiming_norm
 from collections import deque
 from statistics import stdev, mean
 
+import importlib.util
+hthpu = None
+if importlib.util.find_spec("habana_frameworks") is not None:
+    import habana_frameworks.torch.hpu as hthpu
+
+    if hthpu.is_available():
+        from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 
 optimizer_dict = {optim_name : cls_obj for optim_name, cls_obj in inspect.getmembers(torch.optim, inspect.isclass) if optim_name != "Optimizer"}
 
@@ -95,8 +102,11 @@ class HypernetworkModule(torch.nn.Module):
                         zeros_(b)
                     else:
                         raise KeyError(f"Key {weight_init} is not defined as initialization!")
-        devices.torch_npu_set_device()
-        self.to(devices.device)
+        if hthpu and hthpu.is_available():
+            self.to(torch.device("hpu"))
+        else:
+            devices.torch_npu_set_device()
+            self.to(devices.device)
 
     def fix_old_state_dict(self, state_dict):
         changes = {
@@ -565,7 +575,7 @@ def train_hypernetwork(id_task, hypernetwork_name: str, learn_rate: float, batch
             print("Cannot resume from saved optimizer!")
             print(e)
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
 
     batch_size = ds.batch_size
     gradient_step = ds.gradient_step
@@ -629,7 +639,10 @@ def train_hypernetwork(id_task, hypernetwork_name: str, learn_rate: float, batch
                     del c
 
                     _loss_step += loss.item()
-                scaler.scale(loss).backward()
+                if scaler:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
 
                 # go back until we reach gradient accumulation steps
                 if (j + 1) % gradient_step != 0:
@@ -638,8 +651,12 @@ def train_hypernetwork(id_task, hypernetwork_name: str, learn_rate: float, batch
                 if clip_grad:
                     clip_grad(weights, clip_grad_sched.learn_rate)
 
-                scaler.step(optimizer)
-                scaler.update()
+                if scaler:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+
                 hypernetwork.step += 1
                 pbar.update()
                 optimizer.zero_grad(set_to_none=True)
