@@ -18,6 +18,7 @@ from modules.timer import startup_timer
 from modules import logging_config
 
 args, _ = cmd_args.parser.parse_known_args()
+cmd_args.parser.add_argument('--skip-hpu-test', action='store_true', help='Skip HPU availability test')
 logging_config.setup_logging(args.loglevel)
 
 python = sys.executable
@@ -318,6 +319,14 @@ def requirements_met(requirements_file):
 def prepare_environment():
     torch_index_url = os.environ.get('TORCH_INDEX_URL', "https://download.pytorch.org/whl/cu121")
     torch_command = os.environ.get('TORCH_COMMAND', f"pip install torch==2.1.2 torchvision==0.16.2 --extra-index-url {torch_index_url}")
+
+    hthpu = None
+    if importlib.util.find_spec("habana_frameworks") is not None:
+        import habana_frameworks.torch.hpu as hthpu
+        if hthpu.is_available():
+            torch_command = os.environ.get('TORCH_COMMAND', "pip install habana-torch habana-torchvision")
+    requirements_file_for_hpu = os.environ.get('REQS_FILE_FOR_HPU', "requirements_hpu.txt")
+
     if args.use_ipex:
         if platform.system() == "Windows":
             # The "Nuullll/intel-extension-for-pytorch" wheels were built from IPEX source for Intel Arc GPU: https://github.com/intel/intel-extension-for-pytorch/tree/xpu-main
@@ -383,6 +392,13 @@ def prepare_environment():
 
     if args.use_ipex:
         args.skip_torch_cuda_test = True
+
+    if not args.skip_hpu_test and hthpu and not hthpu.is_available():
+        raise RuntimeError(
+            'HPU is not available; '
+            'add --skip-hpu-test to COMMANDLINE_ARGS variable to disable this check'
+        )
+
     if not args.skip_torch_cuda_test and not check_run_python("import torch; assert torch.cuda.is_available()"):
         raise RuntimeError(
             'Torch is not able to use GPU; '
@@ -423,6 +439,13 @@ def prepare_environment():
         run_pip(f"install -r \"{requirements_file}\"", "requirements")
         startup_timer.record("install requirements")
 
+    if not os.path.isfile(requirements_file_for_hpu):
+        requirements_file_for_hpu = os.path.join(script_path, requirements_file_for_hpu)
+
+    if hthpu and hthpu.is_available() and not requirements_met(requirements_file_for_hpu):
+        run_pip(f"install -r \"{requirements_file_for_hpu}\"", "requirements_for_hpu")
+        startup_timer.record("install requirements_for_hpu")
+
     if not os.path.isfile(requirements_file_for_npu):
         requirements_file_for_npu = os.path.join(script_path, requirements_file_for_npu)
 
@@ -454,6 +477,8 @@ def configure_for_tests():
         sys.argv.append(os.path.join(script_path, "test/test_files/empty.pt"))
     if "--skip-torch-cuda-test" not in sys.argv:
         sys.argv.append("--skip-torch-cuda-test")
+    if "--skip-hpu-test" not in sys.argv:
+        sys.argv.append("--skip-hpu-test")
     if "--disable-nan-check" not in sys.argv:
         sys.argv.append("--disable-nan-check")
 
