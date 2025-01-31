@@ -324,7 +324,7 @@ def prepare_environment():
     if importlib.util.find_spec("habana_frameworks") is not None:
         import habana_frameworks.torch.hpu as hthpu
         if hthpu.is_available():
-            torch_command = os.environ.get('TORCH_COMMAND', "pip install habana-torch habana-torchvision")
+            torch_command = os.environ.get('TORCH_COMMAND', "pip install optimum-habana")
     requirements_file_for_hpu = os.environ.get('REQS_FILE_FOR_HPU', "requirements_hpu.txt")
 
     if args.use_ipex:
