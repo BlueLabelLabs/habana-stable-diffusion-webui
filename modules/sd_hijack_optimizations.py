@@ -24,7 +24,7 @@ sgm_diffusionmodules_model_AttnBlock_forward = sgm.modules.diffusionmodules.mode
 
 
 hthpu = None
-if importlib.util.find_spec("optimum_habana") is not None:
+if importlib.util.find_spec("habana_frameworks") is not None:
     import habana_frameworks.torch.hpu as hthpu
 
 

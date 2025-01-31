@@ -10,7 +10,7 @@ from modules.models.sd3.other_impls import attention, Mlp
 import importlib.util
 
 hthpu = None
-if importlib.util.find_spec("optimum_habana") is not None:
+if importlib.util.find_spec("habana_frameworks") is not None:
     import habana_frameworks.torch.hpu as hthpu
 
 

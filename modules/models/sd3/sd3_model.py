@@ -10,7 +10,7 @@ from modules.models.sd3.sd3_cond import SD3Cond
 from modules import shared, devices
 
 hthpu = None
-if importlib.util.find_spec("optimum_habana") is not None:
+if importlib.util.find_spec("habana_frameworks") is not None:
     import habana_frameworks.torch.hpu as hthpu
 
 

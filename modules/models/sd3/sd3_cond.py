@@ -11,7 +11,7 @@ from modules.models.sd3.other_impls import SDClipModel, SDXLClipG, T5XXLModel, S
 
 # Check for Habana Gaudi support
 hthpu = None
-if importlib.util.find_spec("optimum_habana") is not None:
+if importlib.util.find_spec("habana_frameworks") is not None:
     import habana_frameworks.torch.hpu as hthpu
 
 
