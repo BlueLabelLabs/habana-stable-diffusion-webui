@@ -108,8 +108,8 @@ class MemUsageMonitor(threading.Thread):
                 free, total = mem_info.free, mem_info.total
                 self.data["active"] = hthpu.memory_allocated()  # Current HPU memory occupied by tensors
                 self.data["active_peak"] = hthpu.max_memory_allocated()  # Peak HPU memory allocated by tensors
-                self.data["reserved"] = mem_info.used  # Assuming reserved is the same as used for simplicity
-                self.data["reserved_peak"] = mem_info.used  # Assuming peak is the same as used for simplicity
+                self.data["reserved"] = mem_info.used
+                self.data["reserved_peak"] = mem_info.used
                 # Additional HPU memory stats
                 hpu_stats = hthpu.memory_stats()
                 self.data["total_memory"] = hpu_stats['Limit']  # Total memory on HPU device
