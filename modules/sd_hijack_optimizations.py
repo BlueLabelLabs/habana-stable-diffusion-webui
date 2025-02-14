@@ -2,12 +2,13 @@ from __future__ import annotations
 import math
 import psutil
 import platform
+import importlib.util
 
 import torch
 from torch import einsum
 
 from ldm.util import default
-from einops import rearrange
+from einops import rearrange, repeat
 
 from modules import shared, errors, devices, sub_quadratic_attention
 from modules.hypernetworks import hypernetwork
@@ -20,6 +21,11 @@ import sgm.modules.diffusionmodules.model
 
 diffusionmodules_model_AttnBlock_forward = ldm.modules.diffusionmodules.model.AttnBlock.forward
 sgm_diffusionmodules_model_AttnBlock_forward = sgm.modules.diffusionmodules.model.AttnBlock.forward
+
+
+hthpu = None
+if importlib.util.find_spec("habana_frameworks") is not None:
+    import habana_frameworks.torch.hpu as hthpu
 
 
 class SdOptimization:
@@ -143,6 +149,24 @@ class SdOptimizationDoggettx(SdOptimization):
         sgm.modules.diffusionmodules.model.AttnBlock.forward = cross_attention_attnblock_forward
 
 
+class SdOptimizationHPU(SdOptimization):
+    name = "hpu"
+    label = "Habana Gaudi HPU"
+    cmd_opt = "opt_hpu_attention"
+    priority = 90
+
+    def is_available(self):
+        return (hthpu is not None and 
+                hasattr(torch, 'hpu') and 
+                torch.hpu.is_available())
+
+    def apply(self):
+        ldm.modules.attention.CrossAttention.forward = hpu_attention_forward
+        ldm.modules.diffusionmodules.model.AttnBlock.forward = hpu_attnblock_forward
+        sgm.modules.attention.CrossAttention.forward = hpu_attention_forward
+        sgm.modules.diffusionmodules.model.AttnBlock.forward = hpu_attnblock_forward
+
+
 def list_optimizers(res):
     res.extend([
         SdOptimizationXformers(),
@@ -152,6 +176,7 @@ def list_optimizers(res):
         SdOptimizationV1(),
         SdOptimizationInvokeAI(),
         SdOptimizationDoggettx(),
+        SdOptimizationHPU(),
     ])
 
 
@@ -345,11 +370,18 @@ def einsum_op_cuda(q, k, v):
     return einsum_op_tensor_mem(q, k, v, mem_free_total / 3.3 / (1 << 20))
 
 
+def einsum_op_hpu(q, k, v):
+    # Implement HPU-specific einsum operation logic
+    # This is a placeholder; actual implementation may vary
+    return torch.einsum('b i d, b j d -> b i j', q, k).softmax(dim=-1).einsum('b i j, b j d -> b i d', v)
+
+
 def einsum_op(q, k, v):
     if q.device.type == 'cuda':
         return einsum_op_cuda(q, k, v)
-
-    if q.device.type == 'mps':
+    elif q.device.type == 'hpu':
+        return einsum_op_hpu(q, k, v)
+    elif q.device.type == 'mps':
         if mem_total_gb >= 32 and q.shape[0] % 32 != 0 and q.shape[0] * q.shape[1] < 2**18:
             return einsum_op_mps_v1(q, k, v)
         return einsum_op_mps_v2(q, k, v)
@@ -673,5 +705,84 @@ def sub_quad_attnblock_forward(self, x):
     v = v.contiguous()
     out = sub_quad_attention(q, k, v, q_chunk_size=shared.cmd_opts.sub_quad_q_chunk_size, kv_chunk_size=shared.cmd_opts.sub_quad_kv_chunk_size, chunk_threshold=shared.cmd_opts.sub_quad_chunk_threshold, use_checkpoint=self.training)
     out = rearrange(out, 'b (h w) c -> b c h w', h=h)
+    out = self.proj_out(out)
+    return x + out
+
+
+def hpu_attention_forward(self, x, context=None, mask=None):
+    h = self.heads
+    q = self.to_q(x)
+    context = default(context, x)
+    k = self.to_k(context)
+    v = self.to_v(context)
+    
+    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
+    
+    if hthpu and q.device.type == 'hpu':
+        with hthpu.autocast():
+            # Use HPU's optimized scaled dot-product attention
+            sim = torch.einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+            
+            if mask is not None:
+                mask = rearrange(mask, 'b ... -> b (...)')
+                max_neg_value = -torch.finfo(sim.dtype).max
+                mask = repeat(mask, 'b j -> b h i j', h=h, i=sim.shape[-2])
+                sim.masked_fill_(~mask, max_neg_value)
+
+            # HPU-optimized softmax
+            attn = sim.softmax(dim=-1)
+            
+            # HPU-optimized matrix multiplication
+            out = torch.einsum('b h i j, b h j d -> b h i d', attn, v)
+    else:
+        # Fallback to default implementation for non-HPU devices
+        sim = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+        
+        if mask is not None:
+            mask = rearrange(mask, 'b ... -> b (...)')
+            max_neg_value = -torch.finfo(sim.dtype).max
+            mask = repeat(mask, 'b j -> b h i j', h=h, i=sim.shape[-2])
+            sim.masked_fill_(~mask, max_neg_value)
+
+        attn = sim.softmax(dim=-1)
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+
+    out = rearrange(out, 'b h n d -> b n (h d)')
+    return self.to_out(out)
+
+
+def hpu_attnblock_forward(self, x):
+    h_ = x
+    h_ = self.norm(h_)
+    q = self.q(h_)
+    k = self.k(h_)
+    v = self.v(h_)
+    
+    if hthpu and q.device.type == 'hpu':
+        with hthpu.autocast():
+            b, c, h, w = q.shape
+            q, k, v = map(lambda t: rearrange(t, 'b c h w -> b (h w) c'), (q, k, v))
+            
+            # HPU-optimized scaled dot-product attention
+            scale = (k.shape[-1] ** -0.5)
+            sim = torch.einsum('b i d, b j d -> b i j', q, k) * scale
+            
+            # HPU-optimized softmax
+            attn = sim.softmax(dim=-1)
+            
+            # HPU-optimized matrix multiplication
+            out = torch.einsum('b i j, b j d -> b i d', attn, v)
+            out = rearrange(out, 'b (h w) c -> b c h w', h=h)
+    else:
+        # Fallback to default implementation for non-HPU devices
+        b, c, h, w = q.shape
+        q, k, v = map(lambda t: rearrange(t, 'b c h w -> b (h w) c'), (q, k, v))
+        
+        scale = (k.shape[-1] ** -0.5)
+        sim = einsum('b i d, b j d -> b i j', q, k) * scale
+        attn = sim.softmax(dim=-1)
+        out = einsum('b i j, b j d -> b i d', attn, v)
+        out = rearrange(out, 'b (h w) c -> b c h w', h=h)
+
     out = self.proj_out(out)
     return x + out

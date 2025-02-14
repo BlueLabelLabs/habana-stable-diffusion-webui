@@ -33,6 +33,14 @@ import piexif.helper
 from contextlib import closing
 from modules.progress import create_task_id, add_task_to_queue, start_task, finish_task, current_task
 
+import importlib.util
+hthpu = None
+if importlib.util.find_spec("habana_frameworks") is not None:
+    import habana_frameworks.torch.hpu as hthpu
+
+    if hthpu.is_available():
+        from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
 def script_name_to_index(name, scripts):
     try:
         return [script.title().lower() for script in scripts].index(name.lower())
@@ -877,11 +885,23 @@ class Api:
                     'inactive': inactive,
                     'events': warnings,
                 }
+
+                if hthpu and hthpu.is_available():
+                    hpu_memory_info = hthpu.memory_info()
+                    hpu = {
+                        'free': hpu_memory_info.free,
+                        'used': hpu_memory_info.used,
+                        'total': hpu_memory_info.total,
+                    }
+                else:
+                    hpu = {'error': 'unavailable'}
             else:
                 cuda = {'error': 'unavailable'}
         except Exception as err:
             cuda = {'error': f'{err}'}
-        return models.MemoryResponse(ram=ram, cuda=cuda)
+            hpu = {'error': f'{err}'}
+
+        return models.MemoryResponse(ram=ram, cuda=cuda, hpu=hpu)
 
     def get_extensions_list(self):
         from modules import extensions
