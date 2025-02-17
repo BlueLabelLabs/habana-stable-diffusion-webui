@@ -1,9 +1,19 @@
 import sys
 import contextlib
 from functools import lru_cache
+import importlib.util
 
 import torch
 from modules import errors, shared, npu_specific
+
+# Check for habana_frameworks availability
+hthpu = None
+if importlib.util.find_spec("habana_frameworks") is not None:
+    import habana_frameworks.torch.core as htcore
+    import habana_frameworks.torch.hpu as hthpu
+
+    if hthpu.is_available():
+        from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 
 if sys.platform == "darwin":
     from modules import mac_specific
@@ -60,6 +70,9 @@ def get_optimal_device_name():
     if npu_specific.has_npu:
         return npu_specific.get_npu_device_string()
 
+    if has_hpu():
+        return get_hpu_device_string()
+
     return "cpu"
 
 
@@ -90,6 +103,9 @@ def torch_gc():
     if npu_specific.has_npu:
         torch_npu_set_device()
         npu_specific.torch_npu_gc()
+
+    if has_hpu():
+        htcore.hpu_gc()
 
 
 def torch_npu_set_device():
@@ -228,6 +244,9 @@ def autocast(disable=False):
     if has_xpu() or has_mps() or cuda_no_autocast():
         return manual_cast(dtype)
 
+    if has_hpu():
+        return torch.autocast("hpu")
+
     return torch.autocast("cuda")
 
 
@@ -293,3 +312,11 @@ def force_model_fp16():
     sgm_util.GroupNorm32 = torch.nn.GroupNorm
     ldm_util.GroupNorm32 = torch.nn.GroupNorm
     print("ldm/sgm GroupNorm32 replaced with normal torch.nn.GroupNorm due to `--precision half`.")
+
+
+def has_hpu() -> bool:
+    return hthpu is not None and hthpu.is_available()
+
+
+def get_hpu_device_string():
+    return "hpu"

@@ -2,11 +2,17 @@ import os
 import safetensors
 import torch
 import typing
+import importlib.util
 
 from transformers import CLIPTokenizer, T5TokenizerFast
 
 from modules import shared, devices, modelloader, sd_hijack_clip, prompt_parser
 from modules.models.sd3.other_impls import SDClipModel, SDXLClipG, T5XXLModel, SD3Tokenizer
+
+# Check for Habana Gaudi support
+hthpu = None
+if importlib.util.find_spec("habana_frameworks") is not None:
+    import habana_frameworks.torch.hpu as hthpu
 
 
 class SafetensorsMapping(typing.Mapping):
@@ -176,10 +182,16 @@ class SD3Cond(torch.nn.Module):
             self.model_t5 = Sd3T5(self.t5xxl)
 
     def forward(self, prompts: list[str]):
-        with devices.without_autocast():
-            lg_out, vector_out = self.model_lg(prompts)
-            t5_out = self.model_t5(prompts, token_count=lg_out.shape[1])
-            lgt_out = torch.cat([lg_out, t5_out], dim=-2)
+        if hthpu and any(p.device.type == 'hpu' for p in prompts):
+            with hthpu.autocast():
+                lg_out, vector_out = self.model_lg(prompts)
+                t5_out = self.model_t5(prompts, token_count=lg_out.shape[1])
+                lgt_out = torch.cat([lg_out, t5_out], dim=-2)
+        else:
+            with devices.without_autocast():
+                lg_out, vector_out = self.model_lg(prompts)
+                t5_out = self.model_t5(prompts, token_count=lg_out.shape[1])
+                lgt_out = torch.cat([lg_out, t5_out], dim=-2)
 
         return {
             'crossattn': lgt_out,

@@ -160,6 +160,55 @@ git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui
 
 Find the instructions [here](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Installation-on-Apple-Silicon).
 
+## Stable Diffusion Integration with Intel® Gaudi® HPU
+
+Stable Diffusion has been successfully integrated with Intel® Gaudi® HPUs, enabling high-performance text-to-image generation and image modifications on Habana’s specialized AI hardware. This enhancement leverages Habana’s optimized PyTorch environment to maximize efficiency and scalability for AI workloads.
+
+## Stable Diffusion Integration with Intel® Gaudi® HPU
+
+Stable Diffusion can be effectively run on Intel® Gaudi® HPUs, providing high-performance capabilities for deploying text-to-image generation systems in Dockerized environments. This approach is particularly valuable for frontend applications requiring real-time generative AI solutions. 
+
+### Key Benefits of Intel® Gaudi® HPUs:
+
+- **Optimized Performance:** Intel® Gaudi® HPUs are designed for deep learning workloads, delivering efficient and scalable solutions for generative AI tasks.
+- **Docker Compatibility:** Pre-configured Docker containers make it easy to set up and deploy Stable Diffusion workflows.
+- **Cost Efficiency:** Lower training and inference costs compared to traditional GPU-based systems.
+- **Documentation and Support:** Comprehensive resources are available at [Intel® Gaudi® Documentation](https://docs.habana.ai/en/latest/index.html).
+
+### Running Stable Diffusion on Intel® Gaudi® HPUs with Docker
+
+#### Step 1: Prepare the Docker Environment
+
+Intel® provides prebuilt Docker images optimized for Gaudi® HPUs. Follow these steps to set up your environment:
+
+1. Pull the Base Image:
+   ```bash
+   docker pull vault.habana.ai/gaudi-docker/1.18.0/ubuntu22.04/habanalabs/pytorch-installer-2.3.1:latest
+   ```
+
+2. Build a Docker Image for Stable Diffusion:
+   ```bash
+   docker build -t sd_hpu:latest -f Dockerfile.hpu .
+   ```
+
+3. Run the Docker Container:
+   ```bash
+   docker run -it --runtime=habana sd_hpu:latest
+   ```
+   Use the `-v` option to mount local directories if needed.
+
+#### Step 2: Configure Stable Diffusion
+
+Inside the Docker container, configure and run Stable Diffusion pipelines. The Docker environment comes preloaded with Habana-specific optimizations, enabling seamless execution.
+
+### Exploring Habana’s Tools and Documentation
+
+Habana’s tools, such as SynapseAI and Gaudi-specific libraries, are tailored to enhance the performance of AI models. Key resources include:
+
+- **Framework Integrations:** Optimized support for PyTorch and TensorFlow.
+- **HPU Graph Support:** Efficient execution for both training and inference workflows.
+- **Detailed Documentation:** Access the [Intel® Gaudi® Documentation](https://docs.habana.ai/en/latest/index.html) for technical insights, best practices, and troubleshooting.
+
 ## Contributing
 Here's how to add code to this repo: [Contributing](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Contributing)
 
